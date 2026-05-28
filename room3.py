@@ -471,16 +471,16 @@ with st.sidebar:
         with st.form("tc_f"):
             tn = st.text_input("Name")
             md = st.multiselect("AM Days", DAYS)
-            mr = st.slider("AM", 7.5, 12.0, (7.5, 12.0), 0.5, "%g") # Gi-update (7.5 = 7:30)
+            mr = st.slider("AM", 7.5, 12.0, (7.5, 12.0), 0.5, "%g")
             ad = st.multiselect("PM Days", DAYS)
-            ar = st.slider("PM", 1.0, 8.0, (1.0, 8.0), 0.5, "%g")   # Gidugangan og 0.5 step
+            ar = st.slider("PM", 1.0, 8.0, (1.0, 8.0), 0.5, "%g")
         
             if st.form_submit_button("Save"):
-                # Gi-convert ang .5 decimal ngadto sa ":30" nga string format para dili mo-error
-                ms = f"{int(mr[0])}:30 AM" if mr[0] % 1 else fmt_time(mr[0])
-                me = f"{int(mr[1])}:30 AM" if mr[1] % 1 else fmt_time(mr[1])
-                as_ = f"{int(ar[0])}:30 PM" if ar[0] % 1 else fmt_time(ar[0], True)
-                ae = f"{int(ar[1])}:30 PM" if ar[1] % 1 else fmt_time(ar[1], True)
+                # Gi-convert ug gihimong INT ang tibuok numero para dili na mag-error ang datetime()
+                ms = f"{int(mr[0])}:30 AM" if mr[0] % 1 else fmt_time(int(mr[0]))
+                me = f"{int(mr[1])}:30 AM" if mr[1] % 1 else fmt_time(int(mr[1]))
+                as_ = f"{int(ar[0])}:30 PM" if ar[0] % 1 else fmt_time(int(ar[0]), True)
+                ae = f"{int(ar[1])}:30 PM" if ar[1] % 1 else fmt_time(int(ar[1]), True)
 
                 avail = {d: [] for d in DAYS}
                 for d in md: avail[d].extend(get_slots(ms,me))
