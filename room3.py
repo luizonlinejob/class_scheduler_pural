@@ -173,23 +173,38 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==========================================
-#         🚀 MAIN APP 
+#         ⚙️ FLEXIBLE TIME CONFIGURATION
 # ==========================================
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-TIMESLOTS = []
-TIME_OBJECTS = [] 
-current = datetime(2024, 1, 1, 7, 30)
-limit = datetime(2024, 1, 1, 20, 0)
-while current < limit:
-    TIMESLOTS.append(current.strftime("%I:%M %p").lstrip("0"))
-    TIME_OBJECTS.append(current)
-    current += timedelta(minutes=30)
-
-SLOT_INDICES = range(len(TIMESLOTS))
 DAY_INDICES = range(len(DAYS))
 
-# INIT SESSION
+# Dynamic Time Slot Generator base sa gipili sa User
+def generate_timeslots(am_start_str, pm_start_str):
+    slots = []
+    objs = []
+    
+    # Buntag nga cycle (Kutob 12:00 PM)
+    am_h, am_m = map(int, am_start_str.split(':'))
+    current = datetime(2024, 1, 1, am_h, am_m)
+    am_limit = datetime(2024, 1, 1, 12, 0)
+    while current < am_limit:
+        slots.append(current.strftime("%I:%M %p").lstrip("0"))
+        objs.append(current)
+        current += timedelta(minutes=30)
+        
+    # Hapon nga cycle (Kutob 8:00 PM)
+    pm_h, pm_m = map(int, pm_start_str.split(':'))
+    current = datetime(2024, 1, 1, pm_h, pm_m)
+    pm_limit = datetime(2024, 1, 1, 20, 0)
+    while current < pm_limit:
+        slots.append(current.strftime("%I:%M %p").lstrip("0"))
+        objs.append(current)
+        current += timedelta(minutes=30)
+        
+    return slots, objs
+
+# INIT SESSION VARIABLES
 if "rooms" not in st.session_state: st.session_state.rooms = ["Room 101", "Room 102", "ComLab 1"] 
 if "sections" not in st.session_state: st.session_state.sections = ["BSCS-1A", "BSIT-1A"] 
 if "teachers" not in st.session_state: st.session_state.teachers = {} 
@@ -197,19 +212,18 @@ if "classes" not in st.session_state: st.session_state.classes = []
 if "final_schedule" not in st.session_state: st.session_state.final_schedule = []
 if "calendar_events" not in st.session_state: st.session_state.calendar_events = [] 
 
-# HELPERS
+# TIME OPERATIONS
 def get_end_time(start_str):
     t = datetime.strptime(start_str, "%I:%M %p")
     return (t + timedelta(minutes=90)).strftime("%I:%M %p").lstrip("0")
 
 def get_slots(start, end):
     try:
-        s = next(i for i, t in enumerate(TIMESLOTS) if t == start)
-        e = next(i for i, t in enumerate(TIMESLOTS) if t == end)
+        s = next(i for i, t in enumerate(st.session_state.timeslots) if t == start)
+        e = next(i for i, t in enumerate(st.session_state.timeslots) if t == end)
         return list(range(s, e))
     except: return []
 
-# GI-FIX ANG FMT_TIME ARON DILI MAG-ERROR SA DECIMAL/INT CONVERSIONS
 def fmt_time(v, pm=False):
     h = int(v)
     m = 30 if (v - h) == 0.5 else 0
@@ -299,8 +313,8 @@ def load_gen(gid):
         for r in rows:
             st_str = r['time_slot'].split(' - ')[0]
             try: 
-                idx = TIMESLOTS.index(st_str)
-                h, m = TIME_OBJECTS[idx].hour, TIME_OBJECTS[idx].minute
+                idx = st_state_timeslots.index(st_str)
+                h, m = st.session_state.time_objects[idx].hour, st.session_state.time_objects[idx].minute
             except: h, m = 8, 0
             res.append({"Day":r['day_of_week'],"Time":r['time_slot'],"Subject":r['subject_name'],
                         "Professor":r['professor'],"Section":r['section_name'],"Room":r['room_name'],
@@ -325,29 +339,46 @@ def build_calendar_events(schedule_data):
         })
     return evts
 
-# --- SOLVER ---
+# --- CP-MODEL CP-OR-TOOLS SOLVER ENGINE ---
 def solve():
     model = cp_model.CpModel()
     classes = st.session_state.classes
     rooms = st.session_state.rooms
+    timeslots = st.session_state.timeslots
+    time_objects = st.session_state.time_objects
+    
     if not classes or not rooms: return None
     vars_ = {}
+    
+    slot_indices = range(len(timeslots))
     
     for c in range(len(classes)):
         for r in range(len(rooms)):
             for d in DAY_INDICES:
-                for t in SLOT_INDICES:
-                    if t+3 <= len(TIMESLOTS): vars_[(c,r,d,t)] = model.NewBoolVar(f"{c}_{r}_{d}_{t}")
+                for t in slot_indices:
+                    if t + 3 <= len(timeslots): 
+                        # Siguraduhon nga ang 3 blocks (1.5 hours) kay magkasunod ug walay "Break Gap" sa tunga
+                        start_time = time_objects[t]
+                        mid_time = time_objects[t+1]
+                        end_time = time_objects[t+2]
+                        
+                        # Siguraduhon nga dili putol ang 1.5 hours block (dili pwede molatoy gikan sa una sa udto padung hapon)
+                        is_valid_block = True
+                        if start_time.hour < 12 and end_time.hour >= 12:
+                            is_valid_block = False
+                            
+                        if is_valid_block:
+                            vars_[(c,r,d,t)] = model.NewBoolVar(f"{c}_{r}_{d}_{t}")
     
     for c in range(len(classes)):
-        opts = [vars_[(c,r,d,t)] for r in range(len(rooms)) for d in DAY_INDICES for t in SLOT_INDICES if (c,r,d,t) in vars_]
+        opts = [vars_[(c,r,d,t)] for r in range(len(rooms)) for d in DAY_INDICES for t in slot_indices if (c,r,d,t) in vars_]
         if opts: model.Add(sum(opts) == 1)
         else: return None
         
     for d in DAY_INDICES:
-        for t in SLOT_INDICES:
+        for t in slot_indices:
             active = []
-            for off in range(3):
+            for off in range(3):  
                 ts = t - off
                 if ts >= 0:
                     for c in range(len(classes)):
@@ -364,23 +395,21 @@ def solve():
 
     for c, item in enumerate(classes):
         allowed = item.get('Allowed_Rooms', [])
-        # KUNG WALAY GI-SELECT NGA ROOM, I-ALLOW ANG TANAN PARA DILI MAG-CONFLICT
         if not allowed:
             allowed = rooms
         for ri, rname in enumerate(rooms):
             if rname not in allowed:
                 for d in DAY_INDICES:
-                    for t in SLOT_INDICES:
-                        if (c, ri, d, t) in vars_:
-                            model.Add(vars_[(c, ri, d, t)] == 0)
+                    for t in slot_indices:
+                        if (c, ri, d, t) in vars_: model.Add(vars_[(c, ri, d, t)] == 0)
 
         tsched = st.session_state.teachers.get(item['Teacher'], {})
         for d in DAY_INDICES:
             ok_slots = tsched.get(DAYS[d], [])
-            for t in SLOT_INDICES:
-                if t not in ok_slots:
+            for t in slot_indices:
+                if not (t in ok_slots and (t+1) in ok_slots and (t+2) in ok_slots):
                     for ri in range(len(rooms)):
-                        if (c,ri,d,t) in vars_: model.Add(vars_[(c,ri,d,t)]==0)
+                        if (c,ri,d,t) in vars_: model.Add(vars_[(c,ri,d,t)] == 0)
 
     solver = cp_model.CpSolver()
     if solver.Solve(model) in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -388,10 +417,10 @@ def solve():
         for k, v in vars_.items():
             if solver.Value(v):
                 c,r,d,t = k
-                final.append({"Day": DAYS[d], "Time": f"{TIMESLOTS[t]} - {get_end_time(TIMESLOTS[t])}",
+                final.append({"Day": DAYS[d], "Time": f"{timeslots[t]} - {get_end_time(timeslots[t])}",
                               "Subject": classes[c]['Subject'], "Professor": classes[c]['Teacher'],
                               "Section": classes[c]['Section'], "Room": rooms[r],
-                              "day_idx": d, "h_24": TIME_OBJECTS[t].hour, "m": TIME_OBJECTS[t].minute})
+                              "day_idx": d, "h_24": time_objects[t].hour, "m": time_objects[t].minute})
         return final
     return None
 
@@ -404,32 +433,38 @@ with st.sidebar:
         st.rerun()
     st.divider()
 
-    # --- ADMIN EXCLUSIVE SECTION ---
+    # ⚙️ SCHOOL CONFIGURATION SETTINGS (DYNAMIC SETUP)
+    st.markdown("### ⚙️ School Time Setup")
+    am_start_opt = st.selectbox("Morning Start Time", ["07:30", "08:00", "07:00"], index=0)
+    pm_start_opt = st.selectbox("Afternoon Start Time", ["13:00", "13:30", "14:00"], index=0)
+    
+    # I-save sa session aron magamit sa tibuok system
+    t_slots, t_objs = generate_timeslots(am_start_opt, pm_start_opt)
+    st.session_state.timeslots = t_slots
+    st.session_state.time_objects = t_objs
+    
+    st.caption(f"💡 Lunch Break is auto-set between **12:00 PM to {datetime.strptime(pm_start_opt, '%H:%M').strftime('%I:%M %p')}**")
+    st.divider()
+
     if st.session_state.user_role == 'admin':
         st.markdown("### 👑 Admin Panel")
         
-        # 1. USER APPROVAL
         with st.expander("🔔 User Approvals", expanded=False):
             pend = get_pending_users()
             if pend:
                 for u in pend:
                     c1, c2, c3 = st.columns([2, 1, 1])
                     c1.write(f"{u['username']}")
-                    
-                    if c2.button("✅", key=f"acc_{u['id']}", help="Accept User"):
+                    if c2.button("✅", key=f"acc_{u['id']}"):
                         approve_user(u['id'])
                         st.success(f"Approved {u['username']}")
-                        time.sleep(0.5)
-                        st.rerun()
-                    
-                    if c3.button("❌", key=f"del_usr_{u['id']}", help="Delete User"):
+                        time.sleep(0.5); st.rerun()
+                    if c3.button("❌", key=f"del_usr_{u['id']}"):
                         delete_user_db(u['id'])
                         st.error(f"Deleted {u['username']}")
-                        time.sleep(0.5)
-                        st.rerun()
+                        time.sleep(0.5); st.rerun()
             else: st.caption("No pending users.")
             
-        # 2. MANAGE SCHEDULES
         with st.expander("🗄️ Database History", expanded=True):
             all_gens = get_gens()
             if all_gens:
@@ -442,9 +477,7 @@ with st.sidebar:
                             st.session_state.final_schedule = loaded
                             st.session_state.calendar_events = build_calendar_events(loaded)
                             st.rerun()
-                
                 st.markdown("---")
-                st.caption("Delete Old Records:")
                 for g in all_gens:
                     c1, c2 = st.columns([3,1])
                     c1.text(f"Gen {g[0]}")
@@ -452,11 +485,9 @@ with st.sidebar:
                         delete_generation(g[0])
                         st.success(f"Deleted Gen {g[0]}")
                         time.sleep(0.5); st.rerun()
-            else:
-                st.caption("No saved schedules.")
+            else: st.caption("No saved schedules.")
         st.divider()
 
-    # --- SHARED INPUT FORMS (Admin & User) ---
     with st.expander("🏠 Rooms"):
         for r in st.session_state.rooms: st.caption(f"🔹 {r}")
         with st.form("rm_f"):
@@ -471,17 +502,15 @@ with st.sidebar:
             ns = st.text_input("Name")
             if st.form_submit_button("Add") and ns:
                 st.session_state.sections.append(ns); st.rerun()
-        if st.button("Clear Sections"): 
-            st.session_state.sections = []
-            st.rerun()
+        if st.button("Clear Sections"): st.session_state.sections = []; st.rerun()
 
     with st.expander("👨‍🏫 Teachers"):
         with st.form("tc_f"):
             tn = st.text_input("Name")
             md = st.multiselect("AM Days", DAYS)
-            mr = st.slider("AM", 7.5, 12.0, (7.5, 12.0), 0.5, "%g")
+            mr = st.slider("AM", 7.0, 12.0, (8.0, 12.0), 0.5, "%g")
             ad = st.multiselect("PM Days", DAYS)
-            ar = st.slider("PM", 1.0, 8.0, (1.0, 8.0), 0.5, "%g")
+            ar = st.slider("PM", 1.0, 8.0, (1.5, 8.0), 0.5, "%g")
         
             if st.form_submit_button("Save"):
                 ms = f"{int(mr[0])}:30 AM" if mr[0] % 1 else fmt_time(mr[0])
@@ -500,8 +529,6 @@ with st.sidebar:
         sb = st.text_input("Subject")
         sc = st.selectbox("Section", st.session_state.sections)
         pr = st.selectbox("Prof", list(st.session_state.teachers.keys()) if st.session_state.teachers else ["None"])
-        
-        # Pwede ra pasagdan nga blangko kung nahan i-allow tanan rooms
         rm = st.multiselect("Rooms", st.session_state.rooms)
         
         if st.form_submit_button("Add to Queue") and sb:
@@ -527,9 +554,8 @@ with col_l:
         for i,c in enumerate(st.session_state.classes):
             with st.container(border=True):
                 st.markdown(f"**{c['Subject']}**")
-                st.caption(f"👨‍🏫 {c['Teacher']} | 🎓 {c['Section']}")
+                st.caption(f"👨‍🏫 {c['Teacher']} | 🎓 {c['Section']} | ⏳ **1.5 Hours**")
                 
-                # --- GI-DUGANG PARA MA-EDIT ANG ROOMS DIREKTA SA QUEUE ---
                 updated_rooms = st.multiselect(f"Edit Rooms ({c['Subject']})", st.session_state.rooms, default=c['Allowed_Rooms'], key=f"q_rm_{i}")
                 st.session_state.classes[i]['Allowed_Rooms'] = updated_rooms
                 
@@ -538,15 +564,14 @@ with col_l:
                     st.rerun()
         
         if st.button("🚀 AUTO-SCHEDULE", type="primary", use_container_width=True):
-            with st.spinner("Solving..."):
+            with st.spinner(f"Solving blocks with {am_start_opt} AM and {pm_start_opt} PM Settings..."):
                 res = solve()
                 if res:
                     st.session_state.final_schedule = res
                     st.session_state.calendar_events = build_calendar_events(res)
                     st.success("Done!")
-                    time.sleep(1)
-                    st.rerun()
-                else: st.error("Conflict! Please check constraints.")
+                    time.sleep(1); st.rerun()
+                else: st.error("Conflict! Please ensure teacher allocations match the school's configured time blocks.")
     else: st.info("Empty Queue")
 
 with col_r:
