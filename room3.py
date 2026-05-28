@@ -471,12 +471,17 @@ with st.sidebar:
         with st.form("tc_f"):
             tn = st.text_input("Name")
             md = st.multiselect("AM Days", DAYS)
-            mr = st.slider("AM", 7, 12, (7,12))
+            mr = st.slider("AM", 7.5, 12.0, (7.5, 12.0), 0.5, "%g") # Gi-update (7.5 = 7:30)
             ad = st.multiselect("PM Days", DAYS)
-            ar = st.slider("PM", 1, 8, (1,8))
+            ar = st.slider("PM", 1.0, 8.0, (1.0, 8.0), 0.5, "%g")   # Gidugangan og 0.5 step
+        
             if st.form_submit_button("Save"):
-                ms, me = fmt_time(mr[0]), fmt_time(mr[1])
-                as_, ae = fmt_time(ar[0],True), fmt_time(ar[1],True)
+                # Gi-convert ang .5 decimal ngadto sa ":30" nga string format para dili mo-error
+                ms = f"{int(mr[0])}:30 AM" if mr[0] % 1 else fmt_time(mr[0])
+                me = f"{int(mr[1])}:30 AM" if mr[1] % 1 else fmt_time(mr[1])
+                as_ = f"{int(ar[0])}:30 PM" if ar[0] % 1 else fmt_time(ar[0], True)
+                ae = f"{int(ar[1])}:30 PM" if ar[1] % 1 else fmt_time(ar[1], True)
+
                 avail = {d: [] for d in DAYS}
                 for d in md: avail[d].extend(get_slots(ms,me))
                 for d in ad: avail[d].extend(get_slots(as_,ae))
