@@ -43,7 +43,7 @@ def get_db_connection():
     return conn
 
 # ==========================================
-#        🔒 AUTHENTICATION LOGIC
+#         🔒 AUTHENTICATION LOGIC
 # ==========================================
 
 def init_user_db():
@@ -125,9 +125,8 @@ def delete_user_db(user_id):
 init_user_db()
 
 # ==========================================
-#        🔐 SESSION PERSISTENCE (AUTO-LOGIN)
+#         🔐 SESSION PERSISTENCE (AUTO-LOGIN)
 # ==========================================
-# Check URL params BEFORE initializing defaults to prevent logout on refresh
 if "logged_user" in st.query_params and "logged_role" in st.query_params:
     st.session_state.authenticated = True
     st.session_state.username = st.query_params["logged_user"]
@@ -138,7 +137,7 @@ if 'user_role' not in st.session_state: st.session_state.user_role = None
 if 'username' not in st.session_state: st.session_state.username = None
 
 # ==========================================
-#        🔐 LOGIN SCREEN
+#         🔐 LOGIN SCREEN
 # ==========================================
 
 if not st.session_state.authenticated:
@@ -156,11 +155,8 @@ if not st.session_state.authenticated:
                         st.session_state.authenticated = True
                         st.session_state.user_role = d['role']
                         st.session_state.username = d['username']
-                        
-                        # --- SAVE TO URL FOR PERSISTENCE ---
                         st.query_params["logged_user"] = d['username']
                         st.query_params["logged_role"] = d['role']
-                        
                         st.rerun()
                     else: st.error(m)
         with t2:
@@ -177,7 +173,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==========================================
-#      🚀 MAIN APP 
+#         🚀 MAIN APP 
 # ==========================================
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
@@ -213,9 +209,13 @@ def get_slots(start, end):
         return list(range(s, e))
     except: return []
 
+# GI-FIX ANG FMT_TIME ARON DILI MAG-ERROR SA DECIMAL/INT CONVERSIONS
 def fmt_time(v, pm=False):
-    h = v + 12 if pm and v < 12 else (12 if pm else v)
-    return datetime(2024,1,1,h,0).strftime("%I:%M %p").lstrip("0")
+    h = int(v)
+    m = 30 if (v - h) == 0.5 else 0
+    if pm and h < 12: h += 12
+    elif pm and h == 12: h = 12
+    return datetime(2024,1,1,h,m).strftime("%I:%M %p").lstrip("0")
 
 # --- PDF GENERATOR ---
 class PDF(FPDF):
@@ -363,11 +363,17 @@ def solve():
                 if (acts := [v for (ci, ri, v) in active if ci in s_idxs]): model.Add(sum(acts) <= 1)
 
     for c, item in enumerate(classes):
-        allowed = item['Allowed_Rooms']
+        allowed = item.get('Allowed_Rooms', [])
+        # KUNG WALAY GI-SELECT NGA ROOM, I-ALLOW ANG TANAN PARA DILI MAG-CONFLICT
+        if not allowed:
+            allowed = rooms
         for ri, rname in enumerate(rooms):
             if rname not in allowed:
-                for key in vars_:
-                    if key[0]==c and key[1]==ri: model.Add(vars_[key]==0)
+                for d in DAY_INDICES:
+                    for t in SLOT_INDICES:
+                        if (c, ri, d, t) in vars_:
+                            model.Add(vars_[(c, ri, d, t)] == 0)
+
         tsched = st.session_state.teachers.get(item['Teacher'], {})
         for d in DAY_INDICES:
             ok_slots = tsched.get(DAYS[d], [])
@@ -394,7 +400,7 @@ with st.sidebar:
     st.write(f"👤 **{st.session_state.username}**")
     if st.button("🚪 Logout"):
         st.session_state.authenticated = False
-        st.query_params.clear() # CLEAR URL PARAMS ON LOGOUT
+        st.query_params.clear() 
         st.rerun()
     st.divider()
 
@@ -402,7 +408,7 @@ with st.sidebar:
     if st.session_state.user_role == 'admin':
         st.markdown("### 👑 Admin Panel")
         
-        # 1. USER APPROVAL (UPDATED)
+        # 1. USER APPROVAL
         with st.expander("🔔 User Approvals", expanded=False):
             pend = get_pending_users()
             if pend:
@@ -454,14 +460,16 @@ with st.sidebar:
     with st.expander("🏠 Rooms"):
         for r in st.session_state.rooms: st.caption(f"🔹 {r}")
         with st.form("rm_f"):
-            if st.form_submit_button("Add") and (nr:=st.text_input("Name")):
+            nr = st.text_input("Name")
+            if st.form_submit_button("Add") and nr:
                 st.session_state.rooms.append(nr); st.rerun()
         if st.button("Clear Rooms"): st.session_state.rooms = []; st.rerun()
 
     with st.expander("👥 Sections"):
         for s in st.session_state.sections: st.caption(f"🎓 {s}")
         with st.form("sc_f"):
-            if st.form_submit_button("Add") and (ns:=st.text_input("Name")):
+            ns = st.text_input("Name")
+            if st.form_submit_button("Add") and ns:
                 st.session_state.sections.append(ns); st.rerun()
         if st.button("Clear Sections"): 
             st.session_state.sections = []
@@ -476,11 +484,10 @@ with st.sidebar:
             ar = st.slider("PM", 1.0, 8.0, (1.0, 8.0), 0.5, "%g")
         
             if st.form_submit_button("Save"):
-                # Gi-convert ug gihimong INT ang tibuok numero para dili na mag-error ang datetime()
-                ms = f"{int(mr[0])}:30 AM" if mr[0] % 1 else fmt_time(int(mr[0]))
-                me = f"{int(mr[1])}:30 AM" if mr[1] % 1 else fmt_time(int(mr[1]))
-                as_ = f"{int(ar[0])}:30 PM" if ar[0] % 1 else fmt_time(int(ar[0]), True)
-                ae = f"{int(ar[1])}:30 PM" if ar[1] % 1 else fmt_time(int(ar[1]), True)
+                ms = f"{int(mr[0])}:30 AM" if mr[0] % 1 else fmt_time(mr[0])
+                me = f"{int(mr[1])}:30 AM" if mr[1] % 1 else fmt_time(mr[1])
+                as_ = f"{int(ar[0])}:30 PM" if ar[0] % 1 else fmt_time(ar[0], True)
+                ae = f"{int(ar[1])}:30 PM" if ar[1] % 1 else fmt_time(ar[1], True)
 
                 avail = {d: [] for d in DAYS}
                 for d in md: avail[d].extend(get_slots(ms,me))
@@ -493,7 +500,10 @@ with st.sidebar:
         sb = st.text_input("Subject")
         sc = st.selectbox("Section", st.session_state.sections)
         pr = st.selectbox("Prof", list(st.session_state.teachers.keys()) if st.session_state.teachers else ["None"])
-        rm = st.multiselect("Rooms", st.session_state.rooms, default=st.session_state.rooms)
+        
+        # Pwede ra pasagdan nga blangko kung nahan i-allow tanan rooms
+        rm = st.multiselect("Rooms", st.session_state.rooms)
+        
         if st.form_submit_button("Add to Queue") and sb:
             st.session_state.classes.append({"Subject":sb,"Section":sc,"Teacher":pr,"Allowed_Rooms":rm})
             st.success("Added"); st.rerun()
@@ -518,6 +528,11 @@ with col_l:
             with st.container(border=True):
                 st.markdown(f"**{c['Subject']}**")
                 st.caption(f"👨‍🏫 {c['Teacher']} | 🎓 {c['Section']}")
+                
+                # --- GI-DUGANG PARA MA-EDIT ANG ROOMS DIREKTA SA QUEUE ---
+                updated_rooms = st.multiselect(f"Edit Rooms ({c['Subject']})", st.session_state.rooms, default=c['Allowed_Rooms'], key=f"q_rm_{i}")
+                st.session_state.classes[i]['Allowed_Rooms'] = updated_rooms
+                
                 if st.button("❌ Remove", key=f"queue_del_{i}"): 
                     st.session_state.classes.pop(i)
                     st.rerun()
@@ -531,7 +546,7 @@ with col_l:
                     st.success("Done!")
                     time.sleep(1)
                     st.rerun()
-                else: st.error("Conflict!")
+                else: st.error("Conflict! Please check constraints.")
     else: st.info("Empty Queue")
 
 with col_r:
